@@ -1,0 +1,113 @@
+---
+title: "NYPD shooting incidents by time and age"
+author: "Kai Gui"
+date: "2023-10-11"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+```
+
+## Importing Police Shooting datset
+<https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD>
+
+The NYPD Shooting Dataset is imported from DATA.gov, which provided a dataset from cityofnewyork.us. The scope of this dataset is reported shootings within New York City from 2006 - 2022. 
+
+This report aims to better understand the questions: When do shootings occur, and what age groups are involved? 
+
+```{r get_shooting_data, include=TRUE}
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+shooting_dataset <- read_csv(url_in)
+shooting_dataset
+```
+
+## Tidying Data: Casting date from string to date object 
+
+OCCUR_DATE was imported as a string, so the column was cast as a date. Columns that were not needed for the planned analysis are filtered out and saved to new data frames prior to plotting, and additional cleaning is included with the visualization code (see sections below). Missing data that could be used for additional analysis was identified, but it was decided to not bring external data into this analysis to avoid over complicating this project and expanding the scope beyond what is expected. (See sections on visualizations: age distribution, borough population and police funding)
+
+```{r Transform Data, include=TRUE}
+df <- shooting_dataset %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+summary(df)
+```
+
+
+## Plotting Shooting occurances over time
+
+To investigate when shootings in New York occur, the number of shootings per hour were obtained and plotted. It is apparent that shootings occur more frequently overnight between 10PM - 4AM. This observation likely affects staffing planning for emergency services in New York, where sufficient personnel must be available to respond to shootings at times outside normal working hours.
+
+By comparing the time-shooting profiles between different boroughs, we observe that, shootings are reported more frequently in the Bronx and Brooklyn. For future work, it would be interesting to bring in external data like population and police department funding per borough. We would then be able to better understand which boroughs have higher frequencies of shootings when controlling for other variables.
+
+```{r Plot frequency over time, include=TRUE}
+df %>% 
+  mutate(hour = hour(OCCUR_TIME)) %>% 
+  group_by(hour, BORO) %>% 
+  summarise(freq = n()) -> hour_freqs
+
+ggplot(hour_freqs, aes(x = hour, y = freq, fill = BORO)) +
+  geom_bar(stat = 'identity') +
+  labs(
+    x = "Hour of the Day",
+    y = "Frequency",
+    title = "NYPD Shooting Incidents by Hour (Stacked)",
+    fill = "BORO"
+  )
+
+```
+
+## Plotting Shooting occurances vs age groups.
+
+Now that we have established when shootings occur, we now turn our attention to who perpetrators and victims of shootings are. Since shootings occur overnight, we may expect victims and perpetrators to bo be more common with age groups that are more active, in general, over night. When plotting the interaction of perpetrator and victim age groups in a heat map, we do see that the age groups of 18-24 and 25-44 are most likely to be involved with reported shootings. Additionally we do see that the perpetrators and victims age groups are more frequently the same. We can hypothesize that this occurs because there are higher number of interactions for people of similar ages. For future work, we could bring in external data on the typical number of interactions between age groups, and the age-distribution within New York. This would give us a better idea if shootings are occurring as a byproduct of social interactions, or perhaps the age profile of victims and perpetrators simply follow the population distribution of the area. 
+
+```{r Plot heatmap of perpetrator vs victim ages, inclue=TRUE}
+
+# Combine messy age groups to 'NA' category
+df_age_clean <- df %>%
+  mutate(
+    PERP_AGE_GROUP = case_when(
+      is.na(PERP_AGE_GROUP) ~ 'NA',
+      PERP_AGE_GROUP %in% c('(null)', '1020', '224', '940', 'UNKNOWN') ~ 'NA',
+      TRUE ~ PERP_AGE_GROUP
+    ),
+    VIC_AGE_GROUP = case_when(
+      VIC_AGE_GROUP == '1022' ~ 'UNKNOWN',
+      VIC_AGE_GROUP == 'NA' ~ 'NA',
+      TRUE ~ VIC_AGE_GROUP
+    )
+  )
+
+cross_tab <- df_age_clean %>%
+  group_by(VIC_AGE_GROUP, PERP_AGE_GROUP) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%
+  complete(VIC_AGE_GROUP, PERP_AGE_GROUP, fill = list(count = 0)) %>%
+  pivot_wider(names_from = VIC_AGE_GROUP, values_from = count, values_fill = 0)
+
+
+cross_tab_long <- cross_tab %>%
+  pivot_longer(cols = -PERP_AGE_GROUP, names_to = "VIC_AGE_GROUP", values_to = "count")
+
+# Create the heatmap using ggplot2
+ggplot(cross_tab_long, aes(x = PERP_AGE_GROUP, y = VIC_AGE_GROUP, fill = count)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(
+    x = "Perpetrator Age Group",
+    y = "Victim Age Group",
+    title = "Interaction Between Victim and Perpetrator Age Groups"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## Conclusion
+
+On the questions posed by this report, when do shootings occur and what ages groups are involved, we observed through visualizations that shootings occur most frequently between 10PM-4AM and affect age groups between 18-44 years. We propose additional avenues of investigation bringing in external data, such as population data and the typical number of interactions between different age groups, to further explore questions of which boroughs are experiencing higher than expected (based on population) numbers of shootings, and if the occurrence of shootings is correlated to typical social interactions. 
+
+On the topic of bias, we do note that this analysis is completed on only reported shootings. When considering if shootings are higher than expected per borough, for example, we need to be aware that the true number of shootings may differ from what is reported. Certain neighborhoods may have increased police presence or technology in place to monitor shootings. If this is the case, a borough with lower reported shootings may actually be experiencing worse amounts of gun violence. The consequence of this possibility is that if this analysis was used to determine allocation of police funds, the amount of resources may be allocated ineffectively. It would be important to holistically evaluate the state of gun violence before taking action, either by collaborating this report with additional datasets, or by working closely with local stakeholders who are more knowledgeable about the situation on the ground.
